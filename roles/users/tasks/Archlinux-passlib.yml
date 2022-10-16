@@ -1,0 +1,6 @@
+---
+- name: "Pacman install Python passlib."
+  pacman:
+    name: "python-passlib"
+    state: "present"
+  become: true

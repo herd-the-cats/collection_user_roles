@@ -1,0 +1,110 @@
+- name: "Dotfiles multi user || Install required packages"
+  package:
+    name: "stow"
+    state: "present"
+  become: true
+  become_user: "root"
+
+- name: "Dotfiles multi user || Block for cloning dotfiles repo"
+  block:
+  - name: "Check for vault var presence"
+    fail:
+      msg: "The default key_vault var is undefined or empty."
+    when: dotf_git_repo_default['key_vault'] is undefined or dotf_git_repo_default['key_vault'] | string | length < 1
+
+  - name: "Dotfiles multi user || Make sure .ssh directory exists"
+    file:
+      path: "{{ dotf_userhome }}/.ssh"
+      state: "directory"
+      owner: "{{ dotf_user }}"
+      group: "{{ dotf_user }}"
+      mode: 0700
+    become: true
+    become_user: "root"
+
+  - name: "Dotfiles multi user || Copy git repo key from vault variable"
+    copy:
+      content: "{{ dotf_iter['key_vault'] | default(dotf_git_repo_default['key_vault']) }}\n"
+      dest: "{{ dotf_userhome ~ dotf_git_key_path }}"
+      mode: 0400
+      owner: "{{ dotf_user }}"
+      group: "{{ dotf_user }}"
+    no_log: true
+    ignore_errors: "{{ ansible_check_mode }}"
+    register: r_repo_key_copy1
+    changed_when: r_repo_key_copy1['state'] != 'file'
+    become: true
+    become_user: "root"
+
+  - name: "Dotfiles multi user || Clone dotfiles repo"
+    git:
+      repo: "{{ dotf_iter['url'] | default(dotf_git_repo_default['url']) }}"
+      dest: "{{ dotf_userhome ~ dotf_git_path }}"
+      version: "{{ dotf_iter['version'] | default(dotf_git_repo_default['version']) }}"
+      key_file: "{{ dotf_userhome ~ dotf_git_key_path }}"
+      update: true
+      accept_hostkey: true
+      force: true
+# Environment must be set due to Ansible issue #33947, 20190808 version 2.8
+    environment:
+      TMPDIR: "{{ dotf_userhome }}/.ansible/tmp"
+    when:
+    - dotf_git_repo_default is defined
+    - dotf_git_repo_default['url'] | string | length > 0
+    become: true
+    become_user: "{{ dotf_user }}"
+#Switching the become_user is necessary due to newer git security. Avoids having to set safe.directory.
+
+# The git module doesn't have an owner option, seems to end up root owned no matter which become_user is set.
+  - name: "Dotfiles multi user || Set file ownership of git repo"
+    file:
+      path: "{{ dotf_userhome ~ dotf_git_path }}"
+      owner: "{{ dotf_user }}"
+      group: "{{ dotf_user }}"
+      state: directory
+      recurse: true
+    changed_when: false
+    become: true
+    become_user: "root"
+
+  always:
+  - name: "Dotfiles multi user || Clean up the private key"
+    file:
+      path: "{{ dotf_userhome ~ dotf_git_key_path }}"
+      state: "absent"
+    ignore_errors: "{{ ansible_check_mode }}"
+    register: r_repo_key_clean1
+    changed_when: r_repo_key_clean1['diff']['after']['state'] != 'absent'
+    when: not dotf_iter['key_keep'] | default(dotf_git_repo_default['key_keep']) | bool
+    become: true
+    become_user: "root"
+
+- name: "Dotfiles multi user || Create stow wrapper script"
+  copy:
+    src: "stow_wrapper.sh"
+    dest: "/usr/bin/stow_wrapper.sh"
+    mode: 0755
+  become: true
+  become_user: "root"
+
+# Script args: dotfiles src dir, destination stow dir, dotfile repo dir to stow
+# Sudo is used just to make all links owned by the user because become functionality is limited, but symlink permissions don't really matter.
+# https://superuser.com/a/1188707
+- name: "Dotfiles multi user || Run stow wrapper script on selected repo directories"
+  command:
+    argv:
+    - "sudo"
+    - "-u"
+    - "{{ dotf_user | quote }}"
+    - "/usr/bin/stow_wrapper.sh"
+    - "{{ dotf_userhome ~ dotf_git_path | quote }}"
+    - "{{ dotf_userhome | quote }}"
+    - "{{ stow_folder | quote }}"
+    chdir: "{{ dotf_userhome }}"
+  loop: "{{ dotf_iter['stow_folder_list'] | default(dotf_git_repo_default['stow_folder_list']) }}"
+  loop_control:
+    loop_var: "stow_folder"
+  register: r_stow_results
+  changed_when: r_stow_results['stderr_lines'] | reject('match', 'UNLINK') | reject('search', 'reverts previous action') | list | length > 0
+  become: true
+  become_user: "root"

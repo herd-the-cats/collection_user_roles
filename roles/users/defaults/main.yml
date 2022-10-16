@@ -1,0 +1,30 @@
+---
+# defaults file for users
+users_groups_w_gids: []
+#- name: foo
+#  gid: 1212
+#  system: false
+
+users_accounts: []
+#- name: johndoe
+#  uid: 1111
+#  system: false
+#  shell: "/bin/bash"
+#  home: "/home/johndoe" # or omit
+#  create_home: true
+#  group: johndoe # default to user name
+#  groups:
+#  - foo
+#  - bar
+#  - baz
+#  comment: "John Doe"
+#  auth_keys:
+#  - ssh-rsa blahblahblah
+#  password: #Vault me
+
+users_set_rootpw: false
+
+# Vault
+users_rootpw: ""
+
+users_saltpad: "sphinxofblackquartzjudgemyvow"

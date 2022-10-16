@@ -1,0 +1,90 @@
+---
+# tasks file for users
+- name: "Install Python passlib for password hashing."
+  include_tasks: "{{ ansible_distribution }}-passlib.yml"
+
+- name: "Set root password."
+  user:
+    name: "root"
+    password: "{{ users_rootpw | string | password_hash('sha512', (users_saltpad[::users_saltpad | length | random(seed=inventory_hostname)] ~ 999999 | random(seed=inventory_hostname) | string)[-16:]) }}"
+    state: "present"
+  become: true
+  when:
+  - users_set_rootpw
+  - users_rootpw is defined
+  - users_rootpw | string | length > 0
+
+- name: "Create self-named user groups with matching gid."
+  group:
+    name: "{{ item.name }}"
+    gid: "{{ item.uid | default(omit) }}"
+    state: "present"
+  loop: "{{ users_accounts | map('combine', {'password': 'REDACTED'}) | list }}"
+  become: true
+  when: users_accounts[0].name is defined
+
+- name: "Create groups with specific gid."
+  group:
+    name: "{{ item.name }}"
+    gid: "{{ item.gid | default(omit) }}"
+    system: "{{ item.system | default(omit) }}"
+    state: "present"
+  loop: "{{ users_groups_w_gids }}"
+  become: true
+  when:
+  - users_groups_w_gids[0].name is defined
+
+- name: "Create list of unique secondary user groups"
+  set_fact:
+    users_groups_unique: "{{ users_accounts | selectattr('groups','defined') | map(attribute='groups') | flatten | unique | list }}"
+  when:
+  - users_accounts[0].name is defined
+
+- name: "Create remaining secondary groups for users"
+  group:
+    name: "{{ item }}"
+    state: "present"
+  loop: "{{ users_groups_unique }}"
+  become: true
+  when:
+  - users_groups_unique | length > 0
+
+- name: "Create user accounts."
+  user:
+    state: "present"
+    name: "{{ item.name }}"
+    uid: "{{ item.uid | default(omit) }}"
+    system: "{{ item.system | default(omit) }}"
+    home: "{{ item.home | default(omit) }}"
+    create_home: "{{ item.create_home | default(omit) }}"
+    group: "{{ item.group | default(item.name) }}"
+    groups: "{{ item.groups | default(omit) }}"
+    append: true
+    comment: "{{ item.comment | default(omit) }}"
+    password: "{{ item.password | string | password_hash('sha512', (users_saltpad[::users_saltpad | length | random(seed=inventory_hostname)] ~ 999999 | random(seed=inventory_hostname) | string)[-16:]) if (item.password is defined) else '!' }}"
+  loop: "{{ users_accounts }}"
+  become: true
+  no_log: true
+  when: users_accounts[0].name is defined
+
+- name: "Create .ssh directory."
+  file:
+    state: "directory"
+    path: "{{ item.home | default('/home/' ~ item.name) }}/.ssh"
+    owner: "{{ item.name }}"
+    group: "{{ item.name }}"
+    mode: 0700
+  loop: "{{ users_accounts | map('combine', {'password': 'REDACTED'}) | list }}"
+  become: true
+  when: users_accounts[0].name is defined
+
+- name: "Add authorized public keys for users."
+  authorized_key:
+    user: "{{ item.name }}"
+    state: "present"
+    path: "{{ item.home | default('/home/' ~ item.name) }}/.ssh/authorized_keys"
+    key: "{{ item.auth_keys | join('\n') }}"
+    manage_dir: false
+  loop: "{{ users_accounts | selectattr('auth_keys','defined') | map('combine', {'password': 'REDACTED'}) | list | default([]) }}"
+  become: true
+  when: users_accounts | selectattr('auth_keys','defined') | list | length > 0

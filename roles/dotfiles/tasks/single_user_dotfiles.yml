@@ -1,0 +1,86 @@
+- name: "Dotfiles single user || Check for stow utility install"
+  fail:
+    msg: >
+        "The stow utility must be installed for this role.
+         Please install stow separately, or run this role
+         as multi user with dotf_multi_user = true"
+  when: "'stow' not in ansible_facts['packages']"
+
+- name: "Dotfiles single user || Block for cloning dotfiles repo"
+  block:
+  - name: "Check for vault var presence"
+    fail:
+      msg: "The dotf_git_repo.key_vault var is undefined or empty."
+    when: dotf_git_repo_default['key_vault'] is undefined or dotf_git_repo_default['key_vault'] | string | length < 1
+
+  - name: "Dotfiles single user || Make sure .ssh directory exists"
+    file:
+      path: "{{ dotf_userhome }}/.ssh"
+      state: "directory"
+      owner: "{{ dotf_user }}"
+      group: "{{ dotf_user }}"
+      mode: 0700
+
+  - name: "Dotfiles single user || Copy git repo key from vault variable"
+    copy:
+      content: "{{ dotf_git_repo_default['key_vault'] }}\n"
+      dest: "{{ dotf_userhome ~ dotf_git_key_path }}"
+      mode: 0400
+      owner: "{{ dotf_user }}"
+      group: "{{ dotf_user }}"
+    no_log: true
+    ignore_errors: "{{ ansible_check_mode }}"
+    register: r_repo_key_copy1
+    changed_when: r_repo_key_copy1['state'] != 'file'
+
+  - name: "Dotfiles single user || Clone dotfiles repo"
+    git:
+      repo: "{{ dotf_git_repo_default['url'] }}"
+      dest: "{{ dotf_userhome ~ dotf_git_path }}"
+      version: "{{ dotf_git_repo_default['version'] }}"
+      key_file: "{{ dotf_userhome ~ dotf_git_key_path }}"
+      update: true
+      accept_hostkey: true
+      force: true
+# Environment must be set due to Ansible issue #33947, 20190808 version 2.8
+    environment:
+      TMPDIR: "{{ dotf_userhome }}/.ansible/tmp"
+    when:
+    - dotf_git_repo_default is defined
+    - dotf_git_repo_default['url'] | string | length > 0
+  always:
+  - name: "Dotfiles single user || Clean up the private key"
+    file:
+      path: "{{ dotf_userhome ~ dotf_git_key_path }}"
+      state: "absent"
+    ignore_errors: "{{ ansible_check_mode }}"
+    register: r_repo_key_clean1
+    changed_when: r_repo_key_clean1['diff']['after']['state'] != 'absent'
+    when: not dotf_git_repo_default['key_keep'] | bool
+
+- name: "Dotfiles single user || Create local bin dir if not present"
+  file:
+    state: "directory"
+    path: "{{ dotf_userhome }}/.local/bin"
+    mode: 0700
+
+- name: "Dotfiles single user || Create stow wrapper script"
+  copy:
+    src: "stow_wrapper.sh"
+    dest: "{{ dotf_userhome }}/.local/bin/stow_wrapper.sh"
+    mode: 0755
+
+# Script args: dotfiles src dir, destination stow dir, dotfile repo dir to stow
+- name: "Dotfiles single user || Run stow wrapper script on selected repo directories"
+  command:
+    argv:
+    - "{{ dotf_userhome | quote }}/.local/bin/stow_wrapper.sh"
+    - "{{ dotf_userhome ~ dotf_git_path | quote }}"
+    - "{{ dotf_userhome | quote }}"
+    - "{{ stow_folder | quote }}"
+    chdir: "{{ dotf_userhome }}"
+  loop: "{{ dotf_git_repo_default['stow_folder_list'] }}"
+  loop_control:
+    loop_var: "stow_folder"
+  register: r_stow_results
+  changed_when: r_stow_results['stderr_lines'] | reject('match', 'UNLINK') | reject('search', 'reverts previous action') | length > 0

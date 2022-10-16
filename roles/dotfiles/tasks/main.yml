@@ -1,0 +1,34 @@
+---
+# tasks file for dotfiles
+- name: "Dotfiles main || Get package facts"
+  package_facts:
+
+- name: "Dotfiles main || Check running user (compatibility with become_user)"
+  shell: 'if [[ -n $USER ]] ; then echo $USER ; else { echo "USER env variable is empty! Bailing out." ; exit 1 ; } ; fi'
+  changed_when: false
+  register: r_dotf_cur_user
+
+- name: "Dotfiles main || Get passwd info on running users"
+  getent:
+    database: "passwd"
+  changed_when: false
+
+- name: "Dotfiles main || Include single user tasks for current user"
+  include_tasks: "single_user_dotfiles.yml"
+  vars:
+    dotf_user: "{{ r_dotf_cur_user['stdout'] }}"
+    dotf_userhome: "{{ getent_passwd[r_dotf_cur_user.stdout][4] }}"
+  when:
+  - not dotf_multi_user | bool
+
+- name: "Dotfiles main || Include multi user tasks."
+  include_tasks: "multi_user_dotfiles.yml"
+  vars:
+    dotf_iter: "{{ item }}"
+    dotf_user: "{{ item['user'] }}"
+    dotf_userhome: "{{ getent_passwd[item.user][4] }}"
+  when:
+  - dotf_multi_user | bool
+  loop: >
+        {{ (r_dotf_cur_user['stdout'] in dotf_git_repo_users | map(attribute='user') | list) |
+         ternary(dotf_git_repo_users, dotf_git_repo_users + [{"user": r_dotf_cur_user['stdout']}]) }}

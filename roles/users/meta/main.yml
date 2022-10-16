@@ -1,0 +1,20 @@
+galaxy_info:
+  author: Jason Glass
+  description: user, group, and ssh authorized_keys generating role.
+  company: N/A
+
+  license: BSD-3-Clause
+
+  min_ansible_version: 2.9
+
+  platforms:
+  - name: Arch Linux
+    versions:
+    - all
+
+  galaxy_tags:
+  - users
+  - groups
+  - authorized_keys
+
+dependencies: []

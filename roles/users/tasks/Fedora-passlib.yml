@@ -1,0 +1,7 @@
+---
+- name: "dnf install Python passlib."
+  dnf:
+    name: "python3-passlib"
+    state: "present"
+  become: true
+
